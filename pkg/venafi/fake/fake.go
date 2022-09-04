@@ -18,6 +18,8 @@ package fake
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/Venafi/vcert/v4/pkg/certificate"
 	"github.com/Venafi/vcert/v4/pkg/endpoint"
 )
@@ -48,5 +50,10 @@ func (c *Connector) GenerateRequest(config *endpoint.ZoneConfiguration, req *cer
 		return fmt.Errorf("Unexpected option in PrivateKeyOrigin")
 	}
 
+	return nil
+}
+
+func (c *Connector) ResetCertificate(certificateDN string) error {
+	log.Fatal("ResetCertificate is not implemented")
 	return nil
 }

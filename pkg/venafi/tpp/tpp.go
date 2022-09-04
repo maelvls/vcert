@@ -941,3 +941,4 @@ func (sp serverPolicy) toPolicy() (p endpoint.Policy) {
 	p.AllowKeyReuse = sp.PrivateKeyReuseAllowed
 	return
 }
+

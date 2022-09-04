@@ -69,6 +69,7 @@ func main() {
 			commandEnroll,
 			commandPickup,
 			commandRenew,
+			commandReset,
 			commandRevoke,
 			commandCreatePolicy,
 			commandGetPolicy,

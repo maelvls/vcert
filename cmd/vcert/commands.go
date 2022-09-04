@@ -22,9 +22,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/Venafi/vcert/v4/pkg/venafi/cloud"
-	"github.com/Venafi/vcert/v4/pkg/venafi/fake"
-	"github.com/Venafi/vcert/v4/pkg/venafi/tpp"
 	"io/ioutil"
 	"log"
 	"net"
@@ -33,6 +30,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Venafi/vcert/v4/pkg/venafi/cloud"
+	"github.com/Venafi/vcert/v4/pkg/venafi/fake"
+	"github.com/Venafi/vcert/v4/pkg/venafi/tpp"
 
 	"github.com/Venafi/vcert/v4/pkg/policy"
 	"github.com/Venafi/vcert/v4/pkg/util"
@@ -128,6 +129,18 @@ var (
 		UsageText: ` vcert renew <Required Venafi as a Service -OR- Trust Protection Platform Config> <Options>
 		vcert renew -u https://tpp.example.com -t <TPP access token> --id <ID value>
 		vcert renew -k <VaaS API key> --thumbprint <cert SHA1 fingerprint>`,
+	}
+	commandReset = &cli.Command{
+		Before: runBeforeCommand,
+		Name:   "reset",
+		Flags:  flagsApppend(flagDistinguishedName, flagThumbprint, credentialsFlags),
+		Action: doCommandReset,
+		Usage:  "To renew a certificate",
+		UsageText: ` vcert reset <Required Venafi as a Service -OR- Trust Protection Platform Config> <Options>
+		vcert renew -u https://tpp.example.com -t <TPP access token> --id <ID value>
+		vcert renew -k <VaaS API key> --thumbprint <cert SHA1 fingerprint>
+		    where "ID value" is the distinguished name of the certificate to be reset.
+		`,
 	}
 
 	commandCreatePolicy = &cli.Command{
@@ -1398,6 +1411,38 @@ func doCommandRenew1(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("Failed to output the results: %s", err)
 	}
+	return nil
+}
+
+func doCommandReset(c *cli.Context) error {
+	if flags.distinguishedName == "" {
+		return fmt.Errorf("-id <certificateDN> is required to identify the certificate to reset")
+	}
+
+	err := setTLSConfig()
+	if err != nil {
+		return err
+	}
+
+	validateOverWritingEnviromentVariables()
+	cfg, err := buildConfig(c, &flags)
+	if err != nil {
+		return fmt.Errorf("Failed to build vcert config: %s", err)
+	}
+
+	connector, err := vcert.NewClient(&cfg) // Everything else requires an endpoint connection
+	if err != nil {
+		logf("Unable to connect to %s: %s", cfg.ConnectorType, err)
+	} else {
+		logf("Successfully connected to %s", cfg.ConnectorType)
+	}
+
+	err = connector.ResetCertificate(flags.distinguishedName)
+	if err != nil {
+		logf("Unable to reset certificate %s: %s", flags.distinguishedName, err)
+	}
+
+	logf("Successfully reset certificate %s", flags.distinguishedName)
 	return nil
 }
 

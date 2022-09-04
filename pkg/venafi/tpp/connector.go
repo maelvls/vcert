@@ -2024,3 +2024,25 @@ func parseCertificateMetaDataResponse(b []byte) (data *certificate.CertificateMe
 	err = json.Unmarshal(b, &data)
 	return
 }
+
+func (c *Connector) ResetCertificate(certificateDN string) error {
+	if certificateDN == "" {
+		return fmt.Errorf("cannot reset certificate: the certificate DN is empty")
+	}
+
+	url := urlResource("vedsdk/certificates/reset")
+	statusCode, statusText, respBody, err := c.request("POST", url, struct {
+		CertificateDN string `json:",omitempty"`
+	}{
+		CertificateDN: certificateDN,
+	})
+	if err != nil {
+		return fmt.Errorf("while resetting certificate: %v", err)
+	}
+
+	if statusCode == http.StatusOK {
+		return nil
+	}
+
+	return fmt.Errorf("while resetting certificate: %s, raw response: %s", statusText, respBody)
+}

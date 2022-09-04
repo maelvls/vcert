@@ -1836,3 +1836,8 @@ func getCertificateAuthorityInfoFromCloud(caName, caAccountId, caProductOptionId
 
 	return &info, nil
 }
+
+func (c *Connector) ResetCertificate(certificateDN string) error {
+	log.Fatal("ResetCertificate is not implemented")
+	return nil
+}
