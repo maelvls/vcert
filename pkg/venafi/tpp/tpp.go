@@ -335,6 +335,11 @@ type identity struct {
 	Universal         string `json:"Universal"`
 }
 
+type certificateResetRequest struct {
+	CertificateDN string `json:",omitempty"`
+	Restart       bool   `json:",omitempty"`
+}
+
 type systemStatusVersionResponse string
 
 type urlResource string
@@ -352,6 +357,7 @@ const (
 	urlResourceCertificateRenew       urlResource = "vedsdk/certificates/renew"
 	urlResourceCertificateRequest     urlResource = "vedsdk/certificates/request"
 	urlResourceCertificateRetrieve    urlResource = "vedsdk/certificates/retrieve"
+	urlResourceCertificateReset       urlResource = "vedsdk/certificates/reset"
 	urlResourceCertificateRevoke      urlResource = "vedsdk/certificates/revoke"
 	urlResourceCertificatesAssociate  urlResource = "vedsdk/certificates/associate"
 	urlResourceCertificatesDissociate urlResource = "vedsdk/certificates/dissociate"
@@ -625,7 +631,6 @@ func parseRequestData(b []byte) (data certificateRequestResponse, err error) {
 }
 
 func parseRetrieveResult(httpStatusCode int, httpStatus string, body []byte) (certificateRetrieveResponse, error) {
-	var retrieveResponse certificateRetrieveResponse
 	switch httpStatusCode {
 	case http.StatusOK, http.StatusAccepted:
 		retrieveResponse, err := parseRetrieveData(body)
@@ -634,6 +639,7 @@ func parseRetrieveResult(httpStatusCode int, httpStatus string, body []byte) (ce
 		}
 		return retrieveResponse, nil
 	default:
+		retrieveResponse, _ := parseRetrieveData(body)
 		return retrieveResponse, fmt.Errorf("Unexpected status code on TPP Certificate Retrieval. Status: %s", httpStatus)
 	}
 }

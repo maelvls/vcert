@@ -19,7 +19,6 @@ package tpp
 import (
 	"crypto/ecdsa"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -51,6 +50,7 @@ import (
 
 var ctx *test.Context
 
+/*
 func init() {
 	ctx = test.GetEnvContext()
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
@@ -77,6 +77,7 @@ func init() {
 	ctx.TPPRefreshToken = resp.Refresh_token
 	ctx.TPPaccessToken = resp.Access_token
 }
+*/
 
 func getTestConnector(url string, zone string) (c *Connector, err error) {
 	c, err = NewConnector(url, zone, false, nil)
@@ -549,6 +550,7 @@ func TestRetrieveCertificate(t *testing.T) {
 	tests := []struct {
 		name         string
 		mockRetrieve []mockResp
+		mockReset    mockResp
 		givenTimeout time.Duration
 		expectErr    string
 	}{
@@ -626,15 +628,54 @@ func TestRetrieveCertificate(t *testing.T) {
 				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: WebSDK CertRequest Module Requested Certificate, Stage: 500.`,
 					`{"Stage": 500, "Status": "WebSDK CertRequest Module Requested Certificate"}`},
 			},
-			expectErr: "unable to retrieve: Unexpected status code on TPP Certificate Retrieval. Status: 500 Certificate \\VED\\Policy\\TLS/SSL\\aexample.com has encountered an error while processing, Status: WebSDK CertRequest Module Requested Certificate, Stage: 500.",
+			expectErr: "Issuance is pending. You may try retrieving the certificate later using Pickup ID: \\VED\\Policy\\Test\\bexample.com\n\tStatus: WebSDK CertRequest Module Requested Certificate",
 		},
 		{
-			name: "should fail on msg Click Retry",
+			name: "should succeed after resetting the msg Click Retry",
 			mockRetrieve: []mockResp{
 				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry., Stage: 500.`,
 					`{"Stage": 500, "Status": "This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry."}`},
+				{`200 OK`,
+					`{"CertificateData":"` + certData + `","Filename":"bexample.com.cer","Format":"base64"}`},
 			},
-			expectErr: "unable to retrieve: Unexpected status code on TPP Certificate Retrieval. Status: 500 Certificate \\VED\\Policy\\TLS/SSL\\aexample.com has encountered an error while processing, Status: This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry., Stage: 500.",
+			mockReset: mockResp{`200 OK`, `{"ProcessingResetCompleted": true}`},
+		},
+		{
+			name: "should succeed after resetting the msg Click Retry and after waiting",
+			mockRetrieve: []mockResp{
+				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry., Stage: 500.`,
+					`{"Stage": 500, "Status": "This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry."}`},
+				{`202 Certificate \VED\Policy\TLS/SSL\aexample.com being processed, Status: Post CSR, Stage: 500.`,
+					`{"Stage": 500, "Status": "Post CSR"}`},
+				{`200 OK`,
+					`{"CertificateData":"` + certData + `","Filename":"bexample.com.cer","Format":"base64"}`},
+			},
+			mockReset:    mockResp{`200 OK`, `{"ProcessingResetCompleted": true}`},
+			givenTimeout: 3 * time.Second,
+		},
+		{
+			name: "should fail when reset fails after msg Click Retry",
+			mockRetrieve: []mockResp{
+				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry., Stage: 500.`,
+					`{"Stage": 500, "Status": "This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry."}`},
+				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: Post CSR failed with error: Cannot connect to the certificate authority (CA), Stage: 500.`,
+					`{"Stage": 500, "Status": "Post CSR failed with error: Cannot connect to the certificate authority (CA)."}`},
+			},
+			mockReset: mockResp{`200 OK`, `{"ProcessingResetCompleted": true}`},
+			expectErr: "unable to retrieve: Unexpected status code on TPP Certificate Retrieval. Status: 500 Certificate \\VED\\Policy\\TLS/SSL\\aexample.com has encountered an error while processing, Status: Post CSR failed with error: Cannot connect to the certificate authority (CA), Stage: 500.",
+		},
+		{
+			name: "should reset after receiving a 500 WebSdk error",
+			mockRetrieve: []mockResp{
+				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: WebSDK CertRequest Module Requested Certificate, Stage: 500.`,
+					`{"Stage": 500, "Status": "WebSDK CertRequest Module Requested Certificate"}`},
+				{`500 Certificate \VED\Policy\TLS/SSL\aexample.com has encountered an error while processing, Status: This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry., Stage: 500.`,
+					`{"Stage": 500, "Status": "This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry."}`},
+				{`200 OK`,
+					`{"CertificateData":"` + certData + `","Filename":"bexample.com.cer","Format":"base64"}`},
+			},
+			mockReset:    mockResp{`200 OK`, `{"ProcessingResetCompleted": true}`},
+			givenTimeout: 3 * time.Second,
 		},
 		{
 			name: "should fail when there is a 500 after waiting for the cert",
@@ -658,8 +699,8 @@ func TestRetrieveCertificate(t *testing.T) {
 		},
 	}
 
-	serverWith := func(mockRetrieve []mockResp) (_ *httptest.Server, retrieveCount *int32) {
-		retrieveCount = new(int32)
+	serverWith := func(t *testing.T, mockRetrieve []mockResp, mockReset mockResp) (_ *httptest.Server, retrieveCount, resetCount *int32) {
+		retrieveCount, resetCount = new(int32), new(int32)
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.URL.Path == "/vedsdk/certificates/retrieve":
@@ -678,18 +719,34 @@ func TestRetrieveCertificate(t *testing.T) {
 					mockRetrieve[index].status,
 					mockRetrieve[index].body,
 				)
+			case r.URL.Path == "/vedsdk/certificates/reset":
+				atomic.AddInt32(resetCount, 1)
+				if mockReset == (mockResp{}) {
+					t.Fatalf("/reset: no call was expected, but got 1 call")
+				}
+				req := certificateResetRequest{}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if req.CertificateDN != `\VED\Policy\Test\bexample.com` {
+					t.Fatalf("/vedsdk/certificates/reset: expected CertificateDN to be %s but got %s", `\VED\Policy\Test\bexample.com`, req.CertificateDN)
+				}
+				if req.Restart != true {
+					t.Fatalf("/vedsdk/certificates/reset: expected Restart to be true but got false")
+				}
+
+				writeRespWithCustomStatus(w, mockReset.status, mockReset.body)
 			default:
 				t.Fatalf("mock http server: unimplemented path " + r.URL.Path)
 			}
 		}))
 		t.Cleanup(server.Close)
-		return server, retrieveCount
+		return server, retrieveCount, resetCount
 	}
+
 	for _, tt := range tests {
 		tt := tt // Because t.Parallel.
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			server, retrieveCount := serverWith(tt.mockRetrieve)
+			server, retrieveCount, resetCount := serverWith(t, tt.mockRetrieve, tt.mockReset)
 			trusted := x509.NewCertPool()
 			trusted.AddCert(server.Certificate())
 
@@ -701,6 +758,12 @@ func TestRetrieveCertificate(t *testing.T) {
 			_, err = tpp.RetrieveCertificate(&certificate.Request{PickupID: `\VED\Policy\Test\bexample.com`, Timeout: tt.givenTimeout})
 			if atomic.LoadInt32(retrieveCount) != int32(len(tt.mockRetrieve)) {
 				t.Fatalf("tpp.RetrieveCertificate: expected %d calls to /certificates/retrieve, but got %d", len(tt.mockRetrieve), atomic.LoadInt32(retrieveCount))
+			}
+			if tt.mockReset == (mockResp{}) && atomic.LoadInt32(resetCount) != 0 {
+				t.Fatalf("tpp.RetrieveCertificate: expected no call to /certificates/reset, but got %d", atomic.LoadInt32(resetCount))
+			}
+			if tt.mockReset != (mockResp{}) && atomic.LoadInt32(resetCount) != 1 {
+				t.Fatalf("tpp.RetrieveCertificate: expected 1 call to /certificates/reset, but got %d", atomic.LoadInt32(resetCount))
 			}
 			if tt.expectErr != "" {
 				if err == nil || err.Error() != tt.expectErr {

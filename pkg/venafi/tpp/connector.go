@@ -1196,7 +1196,14 @@ func (c *Connector) browseIdentities(browseReq policy.BrowseIdentitiesRequest) (
 	return &browseIdentitiesResponse, nil
 }
 
-// RetrieveCertificate attempts to retrieve the requested certificate
+// RetrieveCertificate waits until the certificate is issued and returns the
+// certificate. If req.Timeout is set to 0, this function doesn't wait and
+// immediately returns.
+//
+// RetrieveCertificate also resets and restarts the certificate enrollment when
+// the certificate that was just requested is stuck due to a past failed
+// enrollment. This is done to work around the fact that TPP's request endpoint
+// doesn't reset the certificate's enrollment status.
 func (c *Connector) RetrieveCertificate(req *certificate.Request) (certificates *certificate.PEMCollection, err error) {
 
 	includeChain := req.ChainOption != certificate.ChainOptionIgnore
@@ -1232,10 +1239,32 @@ func (c *Connector) RetrieveCertificate(req *certificate.Request) (certificates 
 	}
 
 	startTime := time.Now()
+	didReset := false
 	for {
+		var statuscode int
 		var retrieveResponse *certificateRetrieveResponse
-		retrieveResponse, err = c.retrieveCertificateOnce(certReq)
-		if err != nil {
+		retrieveResponse, statuscode, err = c.retrieveCertificateOnce(certReq)
+		if !didReset &&
+			statuscode == 500 &&
+			retrieveResponse != nil &&
+			retrieveResponse.Status == "This certificate cannot be processed while it is in an error state. Fix any errors, and then click Retry." {
+			didReset = true
+
+			// we want to reset
+			statusCode, status, body, err := c.request("POST", urlResourceCertificateReset, certificateResetRequest{
+				CertificateDN: req.PickupID,
+				Restart:       true,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("while resetting certificate due to a past failed enrollment: %w", err)
+			}
+			if statusCode != http.StatusOK {
+				return nil, fmt.Errorf("while resetting certificate due to a past failed enrollment: %s, body: '%s'", status, body)
+			}
+
+			continue
+		}
+		if err != nil && !(statuscode == 500 && retrieveResponse != nil && retrieveResponse.Status == "WebSDK CertRequest Module Requested Certificate") {
 			return nil, fmt.Errorf("unable to retrieve: %s", err)
 		}
 		if retrieveResponse.CertificateData != "" {
@@ -1256,16 +1285,13 @@ func (c *Connector) RetrieveCertificate(req *certificate.Request) (certificates 
 	}
 }
 
-func (c *Connector) retrieveCertificateOnce(certReq certificateRetrieveRequest) (*certificateRetrieveResponse, error) {
+func (c *Connector) retrieveCertificateOnce(certReq certificateRetrieveRequest) (*certificateRetrieveResponse, int, error) {
 	statusCode, status, body, err := c.request("POST", urlResourceCertificateRetrieve, certReq)
 	if err != nil {
-		return nil, err
+		return nil, statusCode, err
 	}
 	retrieveResponse, err := parseRetrieveResult(statusCode, status, body)
-	if err != nil {
-		return nil, err
-	}
-	return &retrieveResponse, nil
+	return &retrieveResponse, statusCode, err
 }
 
 func (c *Connector) putCertificateInfo(dn string, attributes []nameSliceValuePair) error {
